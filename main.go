@@ -40,8 +40,14 @@ func convert() {
 
 	var module Module
 	err = yaml.Unmarshal(b, &module)
+	if err != nil {
+		log.Panicf("failed to convert yaml: %s", err)
+	}
 
 	d, err := module.MarshalText()
+	if err != nil {
+		log.Panicf("failed to convert yaml: %s", err)
+	}
 	fmt.Printf(string(d))
 }
 
@@ -63,9 +69,11 @@ func readModule() ([]byte, error) {
 type Endpoint struct {
 	Kind string `yaml:"kind"`
 	Spec struct {
-		Functions       string                 `yaml:"functions"`
-		UrlPathTemplate string                 `yaml:"urlPathTemplate"`
-		Timeouts        map[string]interface{} `yaml:"timeouts"`
+		Functions       string `yaml:"functions"`
+		UrlPathTemplate string `yaml:"urlPathTemplate"`
+		Transport       struct {
+			Timeouts map[string]interface{} `yaml:"timeouts"`
+		} `yaml:"transport"`
 	} `yaml:"spec"`
 }
 
@@ -90,7 +98,7 @@ func (e *Endpoint) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	(*e).Kind = "io.statefun.endpoints.v2/http"
 	(*e).Spec.Functions = legacy.Endpoint.Spec.Functions
 	(*e).Spec.UrlPathTemplate = legacy.Endpoint.Spec.UrlPathTemplate
-	(*e).Spec.Timeouts = legacy.Endpoint.Spec.Timeouts
+	(*e).Spec.Transport.Timeouts = legacy.Endpoint.Spec.Timeouts
 
 	return nil
 }
@@ -99,9 +107,11 @@ func (e *Endpoint) MarshalYAML() (interface{}, error) {
 	return struct {
 		Kind string `yaml:"kind"`
 		Spec struct {
-			Functions       string                 `yaml:"functions"`
-			UrlPathTemplate string                 `yaml:"urlPathTemplate"`
-			Timeouts        map[string]interface{} `yaml:"timeouts"`
+			Functions       string `yaml:"functions"`
+			UrlPathTemplate string `yaml:"urlPathTemplate"`
+			Transport       struct {
+				Timeouts map[string]interface{} `yaml:"timeouts"`
+			} `yaml:"transport"`
 		} `yaml:"spec"`
 	}{
 		Kind: e.Kind,
@@ -120,15 +130,23 @@ type KafkaIngressSpec struct {
 	ConsumerGroupId string      `yaml:"consumerGroupId,omitempty"`
 	StartupPosition interface{} `yaml:"startupPosition,omitempty"`
 	Properties      interface{} `yaml:"properties,omitempty"`
-	Topics          interface{} `yaml:"topics"`
+	Topics          []struct {
+		Topic     string   `yaml:"topic"`
+		ValueType string   `yaml:"valueType"`
+		Targets   []string `yaml:"targets"`
+	} `yaml:"topics"`
 }
 
 type KinesisIngressSpec struct {
-	Id                     string      `yaml:"id"`
-	AwsRegion              interface{} `yaml:"awsRegion,omitempty"`
-	AwsCredentials         interface{} `yaml:"awsCredentials,omitempty"`
-	StartupPosition        interface{} `yaml:"startupPosition,omitempty"`
-	Streams                interface{} `yaml:"streams,omitempty"`
+	Id              string      `yaml:"id"`
+	AwsRegion       interface{} `yaml:"awsRegion,omitempty"`
+	AwsCredentials  interface{} `yaml:"awsCredentials,omitempty"`
+	StartupPosition interface{} `yaml:"startupPosition,omitempty"`
+	Streams         []struct {
+		Stream    string   `yaml:"stream"`
+		ValueType string   `yaml:"valueType"`
+		Targets   []string `yaml:"targets"`
+	} `yaml:"streams,omitempty"`
 	ClientConfigProperties interface{} `yaml:"clientConfigProperties,omitempty"`
 }
 
