@@ -15,7 +15,16 @@ var (
 		Use:   "statefun-module-upgrade",
 		Short: "Convert Apache Flink Stateful Function module.yaml to >= 3.1 format",
 		Run: func(cmd *cobra.Command, args []string) {
-			convert()
+			b, err := readModule()
+			if err != nil {
+				log.Panicf("failed to read input: %s", err)
+			}
+
+			d, err := convert(b)
+			if err != nil {
+				log.Panicf("failed to convert yaml: %s", err)
+			}
+			fmt.Printf(string(d))
 		},
 	}
 
@@ -32,17 +41,14 @@ func main() {
 	}
 }
 
-func convert() {
-	b, err := readModule()
+func convert(b []byte) ([]byte, error) {
+	var module Module
+	err := yaml.Unmarshal(b, &module)
 	if err != nil {
-		log.Panicf("failed to read input: %s", err)
+		log.Panicf("failed to convert yaml: %s", err)
 	}
 
-	var module Module
-	err = yaml.Unmarshal(b, &module)
-
-	d, err := module.MarshalText()
-	fmt.Printf(string(d))
+	return []byte(module), err
 }
 
 func readModule() ([]byte, error) {
@@ -63,9 +69,11 @@ func readModule() ([]byte, error) {
 type Endpoint struct {
 	Kind string `yaml:"kind"`
 	Spec struct {
-		Functions       string                 `yaml:"functions"`
-		UrlPathTemplate string                 `yaml:"urlPathTemplate"`
-		Timeouts        map[string]interface{} `yaml:"timeouts"`
+		Functions       string `yaml:"functions"`
+		UrlPathTemplate string `yaml:"urlPathTemplate"`
+		Transport       struct {
+			Timeouts map[string]interface{} `yaml:"timeouts,omitempty"`
+		} `yaml:"transport,omitempty"`
 	} `yaml:"spec"`
 }
 
@@ -78,7 +86,7 @@ func (e *Endpoint) UnmarshalYAML(unmarshal func(interface{}) error) error {
 			Spec struct {
 				Functions       string                 `yaml:"functions"`
 				UrlPathTemplate string                 `yaml:"urlPathTemplate"`
-				Timeouts        map[string]interface{} `yaml:"timeouts"`
+				Timeouts        map[string]interface{} `yaml:"timeouts,omitempty"`
 			} `yaml:"spec"`
 		} `yaml:"endpoint"`
 	}
@@ -90,7 +98,7 @@ func (e *Endpoint) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	(*e).Kind = "io.statefun.endpoints.v2/http"
 	(*e).Spec.Functions = legacy.Endpoint.Spec.Functions
 	(*e).Spec.UrlPathTemplate = legacy.Endpoint.Spec.UrlPathTemplate
-	(*e).Spec.Timeouts = legacy.Endpoint.Spec.Timeouts
+	(*e).Spec.Transport.Timeouts = legacy.Endpoint.Spec.Timeouts
 
 	return nil
 }
@@ -99,9 +107,11 @@ func (e *Endpoint) MarshalYAML() (interface{}, error) {
 	return struct {
 		Kind string `yaml:"kind"`
 		Spec struct {
-			Functions       string                 `yaml:"functions"`
-			UrlPathTemplate string                 `yaml:"urlPathTemplate"`
-			Timeouts        map[string]interface{} `yaml:"timeouts"`
+			Functions       string `yaml:"functions"`
+			UrlPathTemplate string `yaml:"urlPathTemplate"`
+			Transport       struct {
+				Timeouts map[string]interface{} `yaml:"timeouts,omitempty"`
+			} `yaml:"transport,omitempty"`
 		} `yaml:"spec"`
 	}{
 		Kind: e.Kind,
@@ -120,15 +130,23 @@ type KafkaIngressSpec struct {
 	ConsumerGroupId string      `yaml:"consumerGroupId,omitempty"`
 	StartupPosition interface{} `yaml:"startupPosition,omitempty"`
 	Properties      interface{} `yaml:"properties,omitempty"`
-	Topics          interface{} `yaml:"topics"`
+	Topics          []struct {
+		Topic     string   `yaml:"topic"`
+		ValueType string   `yaml:"valueType"`
+		Targets   []string `yaml:"targets"`
+	} `yaml:"topics"`
 }
 
 type KinesisIngressSpec struct {
-	Id                     string      `yaml:"id"`
-	AwsRegion              interface{} `yaml:"awsRegion,omitempty"`
-	AwsCredentials         interface{} `yaml:"awsCredentials,omitempty"`
-	StartupPosition        interface{} `yaml:"startupPosition,omitempty"`
-	Streams                interface{} `yaml:"streams,omitempty"`
+	Id              string      `yaml:"id"`
+	AwsRegion       interface{} `yaml:"awsRegion,omitempty"`
+	AwsCredentials  interface{} `yaml:"awsCredentials,omitempty"`
+	StartupPosition interface{} `yaml:"startupPosition,omitempty"`
+	Streams         []struct {
+		Stream    string   `yaml:"stream"`
+		ValueType string   `yaml:"valueType"`
+		Targets   []string `yaml:"targets"`
+	} `yaml:"streams,omitempty"`
 	ClientConfigProperties interface{} `yaml:"clientConfigProperties,omitempty"`
 }
 
@@ -282,7 +300,7 @@ func (e *Egress) MarshalYAML() (interface{}, error) {
 	}, nil
 }
 
-type Module []interface{}
+type Module string
 
 func (m *Module) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	var legacy struct {
@@ -305,35 +323,34 @@ func (m *Module) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		return fmt.Errorf("failed to unmarshal module.yaml: %w", err)
 	}
 
-	components := make([]interface{}, 0)
+	components := make([]string, 0)
 
 	for _, component := range legacy.Module.Spec.Endpoints {
-		components = append(components, &component)
-	}
-	for _, component := range legacy.Module.Spec.Ingresses {
-		components = append(components, &component)
-	}
-	for _, component := range legacy.Module.Spec.Egresses {
-		components = append(components, &component)
-	}
-
-	*m = components
-
-	return nil
-}
-
-func (m *Module) MarshalText() (text []byte, err error) {
-	builder := strings.Builder{}
-	for _, component := range *m {
-		d, err := yaml.Marshal(component)
+		d, err := yaml.Marshal(component.Endpoint)
 		if err != nil {
-			return nil, err
+			return err
 		}
 
-		builder.Write(d)
-		builder.WriteString("---\n")
+		components = append(components, string(d))
+	}
+	for _, component := range legacy.Module.Spec.Ingresses {
+		d, err := yaml.Marshal(component.Ingress)
+		if err != nil {
+			return err
+		}
+
+		components = append(components, string(d))
+	}
+	for _, component := range legacy.Module.Spec.Egresses {
+		d, err := yaml.Marshal(component.Egress)
+		if err != nil {
+			return err
+		}
+
+		components = append(components, string(d))
 	}
 
-	text = []byte(builder.String())
-	return
+	*m = Module(strings.Join(components, "---\n"))
+
+	return nil
 }
